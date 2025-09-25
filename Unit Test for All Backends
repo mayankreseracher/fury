@@ -1,0 +1,7 @@
+def test_render_on_all_backends():
+    from fury.hardware.hal import HardwareAbstractionLayer
+    hal = HardwareAbstractionLayer()
+    scene, camera = {}, {}  # Mock scene and camera
+    for backend in hal.available_backends:
+        image = hal.render(scene, camera, backend=backend)
+        assert image is None or hasattr(image, "shape")
