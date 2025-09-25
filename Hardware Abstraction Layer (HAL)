@@ -1,41 +1,117 @@
+import platform
+import logging
+from typing import List, Optional, Dict, Any
+
 class HardwareAbstractionLayer:
     def __init__(self):
+        self.logger = logging.getLogger(__name__)
         self.available_backends = self.detect_backends()
-        self.selected_backend = self.available_backends[0] if self.available_backends else "cpu"
+        self.selected_backend = self.choose_default_backend()
+        self.backend_configs: Dict[str, Any] = {}
 
-    def detect_backends(self):
-        backends = ["cpu"]  # CPU always available as fallback
+    def detect_backends(self) -> List[str]:
+        """Detect available rendering backends."""
+        backends = ["cpu"]  # CPU is always available as fallback
         
-        # Check for OpenGL support with proper error handling
+        # Check for OpenGL support
         try:
-            # For Android, check for OpenGL ES
-            if platform.system() == "Android":
-                import android.opengl.GLES20 as gles
-                backends.append("gles")
-            else:
-                import OpenGL.GL
-                backends.append("opengl")
+            import OpenGL.GL
+            backends.append("opengl")
         except ImportError:
-            pass
+            self.logger.info("OpenGL backend not available")
+            
+        # Check for Vulkan support
+        try:
+            import vulkan
+            backends.append("vulkan")
+        except ImportError:
+            self.logger.info("Vulkan backend not available")
+
+        # Android-specific checks
+        if platform.system() == "Linux" and hasattr(platform, "android_ver"):
+            try:
+                # Check for Android OpenGL ES
+                from android.opengl import GLES20
+                backends.append("gles")
+            except ImportError:
+                self.logger.info("Android GLES backend not available")
+
         return backends
 
-    def render(self, scene, camera, backend=None):
+    def choose_default_backend(self) -> str:
+        """Choose the best available backend for the current platform."""
+        if not self.available_backends:
+            return "cpu"
+            
+        # Preferred order: GLES (Android) > Vulkan > OpenGL > CPU
+        if "gles" in self.available_backends:
+            return "gles"
+        elif "vulkan" in self.available_backends:
+            return "vulkan"
+        elif "opengl" in self.available_backends:
+            return "opengl"
+        return "cpu"
+
+    def render(self, scene: dict, camera: dict, backend: Optional[str] = None) -> Any:
+        """Render a scene using the specified or default backend.
+        
+        Parameters
+        ----------
+        scene : dict
+            Scene description containing geometry and materials
+        camera : dict
+            Camera parameters and positioning
+        backend : str, optional
+            Specific backend to use for rendering
+            
+        Returns
+        -------
+        Any
+            The rendered image or None if rendering failed
+        """
         backend = backend or self.selected_backend
+        
         try:
             if backend == "opengl":
-                from fury.hardware.opengl import gl_render
-                return gl_render(scene, camera)
+                return self._render_opengl(scene, camera)
+            elif backend == "vulkan":
+                return self._render_vulkan(scene, camera)
             elif backend == "gles":
-                from fury.hardware.gles import gles_render
-                return gles_render(scene, camera)
+                return self._render_gles(scene, camera)
             elif backend == "cpu":
-                from fury.hardware.cpu import cpu_render
-                return cpu_render(scene, camera)
+                return self._render_cpu(scene, camera)
             else:
-                raise NotImplementedError(f"{backend} rendering not supported yet")
+                raise ValueError(f"Unknown backend: {backend}")
         except Exception as e:
-            print(f"Error rendering with {backend}: {str(e)}")
-            # Fallback to CPU rendering if other backends fail
+            self.logger.error(f"Rendering failed with backend {backend}: {str(e)}")
+            # Fall back to CPU rendering if other backends fail
             if backend != "cpu":
-                return self.render(scene, camera, "cpu")
-            raise
+                self.logger.info("Falling back to CPU renderer")
+                return self._render_cpu(scene, camera)
+            return None
+
+    def _render_opengl(self, scene: dict, camera: dict) -> Any:
+        """OpenGL rendering implementation."""
+        from fury.hardware.opengl import gl_render
+        return gl_render(scene, camera)
+
+    def _render_vulkan(self, scene: dict, camera: dict) -> Any:
+        """Vulkan rendering implementation."""
+        from fury.hardware.vulkan import vulkan_render
+        return vulkan_render(scene, camera)
+
+    def _render_gles(self, scene: dict, camera: dict) -> Any:
+        """Android GLES rendering implementation."""
+        from fury.hardware.gles import gles_render
+        return gles_render(scene, camera)
+
+    def _render_cpu(self, scene: dict, camera: dict) -> Any:
+        """CPU-based software rendering implementation."""
+        from fury.hardware.cpu import cpu_render
+        return cpu_render(scene, camera)
+
+    def configure_backend(self, backend: str, **kwargs) -> None:
+        """Configure specific backend settings."""
+        if backend not in self.available_backends:
+            raise ValueError(f"Backend {backend} not available")
+        self.backend_configs[backend] = kwargs
