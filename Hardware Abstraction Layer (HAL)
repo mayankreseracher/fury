@@ -1,33 +1,41 @@
-import platform
-
 class HardwareAbstractionLayer:
     def __init__(self):
         self.available_backends = self.detect_backends()
         self.selected_backend = self.available_backends[0] if self.available_backends else "cpu"
 
     def detect_backends(self):
-        backends = ["cpu"]
-        # Check for OpenGL support (for most GPUs)
+        backends = ["cpu"]  # CPU always available as fallback
+        
+        # Check for OpenGL support with proper error handling
         try:
-            import OpenGL.GL
-            backends.append("opengl")
+            # For Android, check for OpenGL ES
+            if platform.system() == "Android":
+                import android.opengl.GLES20 as gles
+                backends.append("gles")
+            else:
+                import OpenGL.GL
+                backends.append("opengl")
         except ImportError:
             pass
-        # Placeholder: Extend for Vulkan, CUDA, Metal, or NPU/AI accelerator checks
-        # if self.check_vulkan(): backends.append("vulkan")
-        # if self.check_npu(): backends.append("npu")
         return backends
 
     def render(self, scene, camera, backend=None):
         backend = backend or self.selected_backend
-        if backend == "opengl":
-            from fury.hardware.opengl import gl_render
-            return gl_render(scene, camera)
-        elif backend == "cpu":
-            from fury.hardware.cpu import cpu_render
-            return cpu_render(scene, camera)
-        # elif backend == "npu":
-        #     from fury.hardware.npu import npu_render
-        #     return npu_render(scene, camera)
-        else:
-            raise NotImplementedError(f"{backend} rendering not supported yet.")
+        try:
+            if backend == "opengl":
+                from fury.hardware.opengl import gl_render
+                return gl_render(scene, camera)
+            elif backend == "gles":
+                from fury.hardware.gles import gles_render
+                return gles_render(scene, camera)
+            elif backend == "cpu":
+                from fury.hardware.cpu import cpu_render
+                return cpu_render(scene, camera)
+            else:
+                raise NotImplementedError(f"{backend} rendering not supported yet")
+        except Exception as e:
+            print(f"Error rendering with {backend}: {str(e)}")
+            # Fallback to CPU rendering if other backends fail
+            if backend != "cpu":
+                return self.render(scene, camera, "cpu")
+            raise
