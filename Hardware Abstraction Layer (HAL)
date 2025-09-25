@@ -1,0 +1,33 @@
+import platform
+
+class HardwareAbstractionLayer:
+    def __init__(self):
+        self.available_backends = self.detect_backends()
+        self.selected_backend = self.available_backends[0] if self.available_backends else "cpu"
+
+    def detect_backends(self):
+        backends = ["cpu"]
+        # Check for OpenGL support (for most GPUs)
+        try:
+            import OpenGL.GL
+            backends.append("opengl")
+        except ImportError:
+            pass
+        # Placeholder: Extend for Vulkan, CUDA, Metal, or NPU/AI accelerator checks
+        # if self.check_vulkan(): backends.append("vulkan")
+        # if self.check_npu(): backends.append("npu")
+        return backends
+
+    def render(self, scene, camera, backend=None):
+        backend = backend or self.selected_backend
+        if backend == "opengl":
+            from fury.hardware.opengl import gl_render
+            return gl_render(scene, camera)
+        elif backend == "cpu":
+            from fury.hardware.cpu import cpu_render
+            return cpu_render(scene, camera)
+        # elif backend == "npu":
+        #     from fury.hardware.npu import npu_render
+        #     return npu_render(scene, camera)
+        else:
+            raise NotImplementedError(f"{backend} rendering not supported yet.")
