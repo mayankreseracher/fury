@@ -1,0 +1,10 @@
+#version 330 core
+out vec4 FragColor;
+
+void main() {
+    // Generate primary ray
+    // Call modular functions for intersection, shading, etc.
+    vec3 color = vec3(0.0);
+    // Example: color = tracePath(rayOrigin, rayDirection, maxBounces);
+    FragColor = vec4(color, 1.0);
+}
