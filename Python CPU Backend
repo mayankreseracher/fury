@@ -1,0 +1,5 @@
+def cpu_render(scene, camera):
+    # Pure Python or NumPy-based ray tracer (for demo/testing)
+    print("Rendering with CPU backend...")
+    # Placeholder for demo
+    return None
