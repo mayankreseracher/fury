@@ -1,0 +1,7 @@
+def gl_render(scene, camera):
+    # Setup OpenGL context (can use moderngl or PyOpenGL)
+    # Compile shaders, load geometry, dispatch rendering
+    # Return framebuffer/image as numpy array
+    print("Rendering with OpenGL backend...")
+    # Placeholder for demo
+    return None
