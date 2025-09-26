@@ -1,117 +1,136 @@
 import platform
 import logging
+import time
 from typing import List, Optional, Dict, Any
+from dataclasses import dataclass
+
+@dataclass
+class RenderStats:
+    fps: float = 0.0
+    frame_time: float = 0.0
+    ray_samples: int = 0
 
 class HardwareAbstractionLayer:
     def __init__(self):
         self.logger = logging.getLogger(__name__)
+        self.platform = self.detect_platform()
         self.available_backends = self.detect_backends()
-        self.selected_backend = self.choose_default_backend()
-        self.backend_configs: Dict[str, Any] = {}
+        self.selected_backend = self.available_backends[0] if self.available_backends else "cpu"
+        self.render_stats = RenderStats()
+        self._last_frame_time = 0
+        self.logger.info(f"Initialized HAL on {self.platform} with backends: {self.available_backends}")
+
+    def detect_platform(self) -> str:
+        """Detect platform with improved Android detection"""
+        system = platform.system().lower()
+        
+        try:
+            import android
+            return "android"
+        except ImportError:
+            pass
+
+        return "desktop" 
 
     def detect_backends(self) -> List[str]:
-        """Detect available rendering backends."""
-        backends = ["cpu"]  # CPU is always available as fallback
+        """Detect available rendering backends including ray tracing support"""
+        backends = ["cpu"]  # CPU is always available
         
-        # Check for OpenGL support
-        try:
-            import OpenGL.GL
-            backends.append("opengl")
-        except ImportError:
-            self.logger.info("OpenGL backend not available")
-            
-        # Check for Vulkan support
-        try:
-            import vulkan
-            backends.append("vulkan")
-        except ImportError:
-            self.logger.info("Vulkan backend not available")
-
-        # Android-specific checks
-        if platform.system() == "Linux" and hasattr(platform, "android_ver"):
+        if self.platform == "android":
             try:
-                # Check for Android OpenGL ES
                 from android.opengl import GLES20
                 backends.append("gles")
+                self.logger.info("GLES backend detected")
             except ImportError:
-                self.logger.info("Android GLES backend not available")
+                self.logger.warning("GLES import failed")
+                
+            # Check for Vulkan support on Android
+            try:
+                import vulkan
+                backends.append("vulkan")
+                self.logger.info("Vulkan backend detected")
+            except ImportError:
+                self.logger.warning("Vulkan import failed")
+        else:
+            # Desktop backends
+            try:
+                import OpenGL.GL
+                backends.append("opengl")
+                self.logger.info("OpenGL backend detected")
+            except ImportError:
+                self.logger.warning("OpenGL import failed")
+
+            # Check for ray tracing capable backends
+            try:
+                import nvidia.rtx
+                backends.append("rtx")
+                self.logger.info("NVIDIA RTX backend detected")
+            except ImportError:
+                self.logger.warning("Ray tracing hardware not detected")
 
         return backends
 
-    def choose_default_backend(self) -> str:
-        """Choose the best available backend for the current platform."""
-        if not self.available_backends:
-            return "cpu"
-            
-        # Preferred order: GLES (Android) > Vulkan > OpenGL > CPU
-        if "gles" in self.available_backends:
-            return "gles"
-        elif "vulkan" in self.available_backends:
-            return "vulkan"
-        elif "opengl" in self.available_backends:
-            return "opengl"
-        return "cpu"
+    def update_render_stats(self):
+        """Update FPS and frame timing statistics"""
+        current_time = time.time()
+        if self._last_frame_time:
+            frame_time = current_time - self._last_frame_time
+            self.render_stats.frame_time = frame_time
+            self.render_stats.fps = 1.0 / frame_time if frame_time > 0 else 0
+        self._last_frame_time = current_time
 
-    def render(self, scene: dict, camera: dict, backend: Optional[str] = None) -> Any:
-        """Render a scene using the specified or default backend.
+    def render(self, scene: Dict[str, Any], camera: Dict[str, Any],
+               backend: Optional[str] = None, enable_ray_tracing: bool = False,
+               ray_samples: int = 1) -> Any:
+        """
+        Render a scene using the specified backend
         
-        Parameters
-        ----------
-        scene : dict
-            Scene description containing geometry and materials
-        camera : dict
-            Camera parameters and positioning
-        backend : str, optional
-            Specific backend to use for rendering
-            
-        Returns
-        -------
-        Any
-            The rendered image or None if rendering failed
+        Parameters:
+        -----------
+        scene: Dict containing scene data
+        camera: Dict containing camera parameters
+        backend: Rendering backend to use
+        enable_ray_tracing: Enable ray tracing if available
+        ray_samples: Number of ray samples per pixel for ray tracing
+        
+        Returns:
+        --------
+        Rendered image and render statistics
         """
         backend = backend or self.selected_backend
+        self.render_stats.ray_samples = ray_samples if enable_ray_tracing else 0
         
         try:
-            if backend == "opengl":
-                return self._render_opengl(scene, camera)
+            # Start timing
+            render_start = time.time()
+
+            result = None
+            if backend == "gles":
+                from fury.hardware.gles import gles_render
+                result = gles_render(scene, camera)
+            elif backend == "opengl":
+                from fury.hardware.opengl import gl_render
+                result = gl_render(scene, camera)
             elif backend == "vulkan":
-                return self._render_vulkan(scene, camera)
-            elif backend == "gles":
-                return self._render_gles(scene, camera)
+                from fury.hardware.vulkan import vulkan_render
+                result = vulkan_render(scene, camera)
+            elif backend == "rtx" and enable_ray_tracing:
+                from fury.hardware.rtx import rtx_render
+                result = rtx_render(scene, camera, ray_samples)
             elif backend == "cpu":
-                return self._render_cpu(scene, camera)
+                from fury.hardware.cpu import cpu_render
+                result = cpu_render(scene, camera)
             else:
-                raise ValueError(f"Unknown backend: {backend}")
+                raise NotImplementedError(f"{backend} rendering not supported")
+
+            # Update render statistics
+            self.update_render_stats()
+            
+            return result, self.render_stats
+
         except Exception as e:
             self.logger.error(f"Rendering failed with backend {backend}: {str(e)}")
-            # Fall back to CPU rendering if other backends fail
             if backend != "cpu":
                 self.logger.info("Falling back to CPU renderer")
-                return self._render_cpu(scene, camera)
-            return None
-
-    def _render_opengl(self, scene: dict, camera: dict) -> Any:
-        """OpenGL rendering implementation."""
-        from fury.hardware.opengl import gl_render
-        return gl_render(scene, camera)
-
-    def _render_vulkan(self, scene: dict, camera: dict) -> Any:
-        """Vulkan rendering implementation."""
-        from fury.hardware.vulkan import vulkan_render
-        return vulkan_render(scene, camera)
-
-    def _render_gles(self, scene: dict, camera: dict) -> Any:
-        """Android GLES rendering implementation."""
-        from fury.hardware.gles import gles_render
-        return gles_render(scene, camera)
-
-    def _render_cpu(self, scene: dict, camera: dict) -> Any:
-        """CPU-based software rendering implementation."""
-        from fury.hardware.cpu import cpu_render
-        return cpu_render(scene, camera)
-
-    def configure_backend(self, backend: str, **kwargs) -> None:
-        """Configure specific backend settings."""
-        if backend not in self.available_backends:
-            raise ValueError(f"Backend {backend} not available")
-        self.backend_configs[backend] = kwargs
+                return self.render(scene, camera, "cpu")
+            raise
